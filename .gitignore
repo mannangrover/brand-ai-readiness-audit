@@ -1,0 +1,11 @@
+# audit run outputs (regenerated per run)
+audit_out/
+bundle/
+*_out/
+# python
+__pycache__/
+*.pyc
+.venv/
+# os
+.DS_Store
+Thumbs.db

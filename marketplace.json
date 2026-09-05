@@ -1,0 +1,22 @@
+{
+  "name": "brand-ai-readiness-audit",
+  "version": "1.0.0",
+  "description": "A marketplace of focused skills that audit any website for AI-discoverability and on-site-engagement problems, then emit a single prioritized report of findings and fixes. Recommend-only; read-only; robots-respecting.",
+  "entrypoint": "audit-orchestrator",
+  "skills": [
+    { "id": "audit-orchestrator",     "path": "skills/audit-orchestrator",     "entrypoint": true,
+      "concern": "Composition + reporting: plan the crawl within budget, run the other skills over one shared fetch, dedupe to root cause, apply one severity function, emit the report." },
+    { "id": "crawl-access-audit",      "path": "skills/crawl-access-audit",
+      "concern": "L1 Reachability: robots per-agent, UA discrimination, sitemap, noindex, latency, canonicalization, soft-404." },
+    { "id": "render-extractability",   "path": "skills/render-extractability",
+      "concern": "L2 Readability: raw-vs-rendered gap, facts locked in images/PDF/video, interaction-gated content, semantics." },
+    { "id": "structured-data-audit",   "path": "skills/structured-data-audit",
+      "concern": "L3 Extractability: JSON-LD validity/completeness, schema-vs-DOM agreement, quotable definitional facts, meta/canonical." },
+    { "id": "entity-corroboration",    "path": "skills/entity-corroboration",
+      "concern": "L4 Corroboration & freshness: sameAs anchors, entity disambiguation, NAP/self consistency, staleness, lastmod credibility." },
+    { "id": "answerability-audit",     "path": "skills/answerability-audit",
+      "concern": "L5 Query-space: answer the site's own question set from machine-visible text only; pricing/comparison/persona/geo coverage; llms.txt." },
+    { "id": "engagement-audit",        "path": "skills/engagement-audit",
+      "concern": "Engagement: the AI-referred cold arrival — scent match, orientation, next action, dead ends, interstitials, load cost, mobile, anchors." }
+  ]
+}

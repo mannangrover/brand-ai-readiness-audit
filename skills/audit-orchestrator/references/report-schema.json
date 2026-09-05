@@ -1,0 +1,119 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Brand AI-Readiness Audit Report",
+  "description": "Frozen output contract for the entrypoint (audit-orchestrator). A strict superset of the Round-3 handout floor: every field the handout requires is required here; the extra fields are additive and optional-to-consume.",
+  "type": "object",
+  "required": ["site", "audited_at", "summary", "findings"],
+  "additionalProperties": true,
+  "properties": {
+    "site": {
+      "type": "string",
+      "description": "The audited host, e.g. 'example.com'."
+    },
+    "audited_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 UTC timestamp. The ONLY non-deterministic field in the report."
+    },
+    "summary": {
+      "type": "object",
+      "required": ["total_findings", "critical", "high", "medium"],
+      "additionalProperties": true,
+      "properties": {
+        "total_findings": { "type": "integer", "minimum": 0 },
+        "critical": { "type": "integer", "minimum": 0 },
+        "high": { "type": "integer", "minimum": 0 },
+        "medium": { "type": "integer", "minimum": 0 },
+        "low": { "type": "integer", "minimum": 0 },
+        "top_priorities": {
+          "type": "array",
+          "description": "Ordered finding ids the non-expert should act on first.",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "severity", "evidence", "suggested_action"],
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Stable id, e.g. 'F-001'. Deterministic: assigned by the orchestrator in a fixed sort order.",
+            "pattern": "^F-[0-9]{3,}$"
+          },
+          "title": { "type": "string" },
+          "severity": { "enum": ["critical", "high", "medium", "low"] },
+          "evidence": {
+            "type": "string",
+            "description": "Concrete, reproducible measurement: URLs, counts, ratios, exact missing fields, quoted text."
+          },
+          "suggested_action": {
+            "type": "object",
+            "required": ["summary", "priority"],
+            "additionalProperties": true,
+            "properties": {
+              "summary": { "type": "string" },
+              "priority": { "enum": ["critical", "high", "medium", "low"] },
+              "detail": {
+                "type": "string",
+                "description": "Optional implementation-level fix, specific enough to act on without further research."
+              }
+            }
+          },
+          "layer": {
+            "enum": ["L1", "L2", "L3", "L4", "L5", "ENG"],
+            "description": "Which gate this finding belongs to. Additive."
+          },
+          "check_id": {
+            "type": "string",
+            "description": "The catalogue check that produced it, e.g. 'L1-01'. Enables traceability and the stable-id hash."
+          },
+          "confidence": {
+            "enum": ["confirmed", "probable", "advisory"],
+            "description": "confirmed = directly observed; probable = inferred from a sample; advisory = best-practice, no defect observed."
+          },
+          "affected_urls": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "audit_meta": {
+      "type": "object",
+      "description": "Additive provenance so a reader can trust and reproduce the run.",
+      "additionalProperties": true,
+      "properties": {
+        "pages_sampled": { "type": "integer", "minimum": 0 },
+        "sample_urls": { "type": "array", "items": { "type": "string" } },
+        "duration_seconds": { "type": "number", "minimum": 0 },
+        "skills_run": { "type": "array", "items": { "type": "string" } },
+        "checks_run": { "type": "integer", "minimum": 0 },
+        "checks_passed": {
+          "type": "array",
+          "description": "Checks that ran and found no defect. Reporting these demonstrates coverage, not just failures.",
+          "items": { "type": "string" }
+        },
+        "checks_skipped": {
+          "type": "array",
+          "description": "Checks that could not run (e.g. no headless browser), each with a reason. Never silently pass.",
+          "items": {
+            "type": "object",
+            "required": ["check_id", "reason"],
+            "properties": {
+              "check_id": { "type": "string" },
+              "reason": { "type": "string" }
+            }
+          }
+        },
+        "robots_compliance": {
+          "type": "string",
+          "description": "Statement that the audit itself honoured robots.txt and crawl-delay while fetching."
+        }
+      }
+    }
+  }
+}
