@@ -181,6 +181,42 @@ def inject_extras(out_dir, frag_paths):
             pass
 
 
+def write_budget(out_dir, snap_started_iso, elapsed_now, budget_seconds=300):
+    """Create or refresh <out-dir>/budget.json - the audit's single clock.
+
+    started_at is written once and never moved: a later phase re-running this
+    must not reset the budget. Existing shed rows are preserved.
+    """
+    path = os.path.join(out_dir, "budget.json")
+    record = {"started_at": None, "budget_seconds": budget_seconds, "shed": []}
+    if os.path.exists(path):
+        try:
+            prev = json.load(open(path))
+            record["started_at"] = prev.get("started_at")
+            record["shed"] = prev.get("shed") or []
+            record["budget_seconds"] = prev.get("budget_seconds", budget_seconds)
+        except (OSError, ValueError):
+            pass
+    if not record["started_at"]:
+        # collection_started_at is when fetching BEGAN. audited_at is when it
+        # ended, so it is only the last resort - anchoring the budget there
+        # silently discards the collection phase and reports a near-zero runtime.
+        snap = os.path.join(out_dir, "snapshot.json")
+        try:
+            sn = json.load(open(snap))
+            record["started_at"] = sn.get("collection_started_at") or snap_started_iso                 or sn["audited_at"]
+        except (OSError, ValueError, KeyError):
+            record["started_at"] = snap_started_iso or datetime.fromtimestamp(
+                time.time() - max(0, elapsed_now), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(record, fh, indent=2)
+            fh.write("\n")
+        print("phase1: budget clock pinned at %s (%s)" % (record["started_at"], path))
+    except OSError as e:  # noqa: BLE001 - the sidecar is additive; never fail phase 1 over it
+        print("phase1: note - budget.json not written (%s)" % e)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Phase 1: snapshot + scripted specialists, one call.")
     ap.add_argument("--url", required=True)
@@ -271,6 +307,11 @@ def main(argv=None):
           (int(elapsed),
            "offsite (+referral 3q)" if elapsed > 210 else "none",
            "answer-coverage=core-only" if elapsed > 150 else "full"))
+    # Pin the audit's start to a file so the same clock the shed gates read is
+    # the clock build_report publishes as coverage.time_seconds. Carrying a
+    # timestamp through the audit by hand would cost a model turn and be wrong
+    # the first time someone re-ran a step.
+    write_budget(out_dir, snap_started_iso=started, elapsed_now=elapsed)
     return 0
 
 

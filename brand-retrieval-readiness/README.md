@@ -123,13 +123,25 @@ line to the owning SKILL.md — a check without a guard is not finished.
 
 ## Measured runtime
 
-Snapshot collection is bounded (120 s network deadline, serial requests) and
+**Every report states how long it took.** `run_phase1` pins the audit's start in
+`audit/budget.json`, the shed gates append what they dropped and at what clock
+reading, and `build_report` publishes all of it as `coverage.time_seconds`,
+`coverage.budget_seconds`, `coverage.budget_exceeded` and `coverage.shed[]` —
+rendered at the top of `report.md` and printed on stdout. A run that overran says
+so in `limitations[]`; a run that shed work reports `audit_status: "partial"`,
+because shedding is a deadline hit and the schema has always defined it that way.
+Runtime is a measured property of each audit, not a claim in this README.
+
+Snapshot collection is bounded (120 s network deadline, 8 s per request) and
 typically lands in 5–30 s; the scripted specialists take seconds via the phase-1
 runner. Wall-clock is dominated by model judgment turns. Measured end-to-end
 across harnesses: ~2–4 minutes fast runs, ~6–8 minutes serial with live probes
 (probes run ~15–20 s each all-in); dense or ambiguous sites deliberate longer on
 any model. Whole-audit budget is 5 minutes; shed order is probes → opportunities
-→ judgments → never the report, and a valid partial always beats an overrun.
+→ judgments → never the report, and a valid partial always beats an overrun. The
+serial-with-live-probes path still exceeds the budget on dense sites — the
+measurement now lands in the report instead of only here, which is what makes the
+overrun a tracked number rather than a footnote.
 
 ## Limitations — what this will never claim
 

@@ -128,6 +128,96 @@ def fail(what, errs):
     sys.exit(1)
 
 
+BUDGET_DEFAULT_SECONDS = 300
+
+
+def _parse_started_at(value):
+    """ISO 8601 (with or without trailing Z) or epoch seconds -> epoch float, or None."""
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        pass
+    try:
+        text = str(value).strip().replace("Z", "+00:00")
+        dt = datetime.datetime.fromisoformat(text)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=datetime.timezone.utc)
+        return dt.timestamp()
+    except (TypeError, ValueError, AttributeError):
+        return None
+
+
+def _parse_shed_arg(raw):
+    """'what@seconds:reason' -> a shed row. Seconds and reason are optional."""
+    text = (raw or "").strip()
+    if not text:
+        return None
+    reason = ""
+    if ":" in text:
+        text, reason = text.split(":", 1)
+    at = 0
+    if "@" in text:
+        text, _, tail = text.partition("@")
+        try:
+            at = int(float(tail))
+        except (TypeError, ValueError):
+            at = 0
+    row = {"what": text.strip()[:120], "at_seconds": max(0, at)}
+    if reason.strip():
+        row["reason"] = reason.strip()[:300]
+    return row if row["what"] else None
+
+
+def _budget_record(args):
+    """Read the budget sidecar written by run_phase1 / the passages post-step.
+
+    The sidecar lives next to snapshot.json so neither the model nor the caller
+    has to carry a timestamp through the audit by hand - the clock that the shed
+    gates already read is the same clock the report publishes. Explicit CLI flags
+    win over the sidecar; the snapshot's own audited_at is the last fallback, so
+    time_seconds is populated even for a run that never touched run_phase1.
+    """
+    record = {"started_at": None, "budget_seconds": BUDGET_DEFAULT_SECONDS, "shed": []}
+    sidecar = None
+    if args.budget_file:
+        sidecar = args.budget_file
+    elif args.snapshot:
+        sidecar = os.path.join(os.path.dirname(os.path.abspath(args.snapshot)), "budget.json")
+    if sidecar and os.path.exists(sidecar):
+        try:
+            data = load_json(sidecar)
+            record["started_at"] = _parse_started_at(data.get("started_at"))
+            if isinstance(data.get("budget_seconds"), int):
+                record["budget_seconds"] = data["budget_seconds"]
+            for row in data.get("shed") or []:
+                if isinstance(row, dict) and row.get("what"):
+                    record["shed"].append({
+                        "what": str(row["what"])[:120],
+                        "at_seconds": max(0, int(row.get("at_seconds") or 0)),
+                        **({"reason": str(row["reason"])[:300]} if row.get("reason") else {})})
+        except (OSError, ValueError, TypeError, KeyError):
+            pass  # a malformed sidecar degrades to "not tracked", never fails the report
+    if args.started_at:
+        record["started_at"] = _parse_started_at(args.started_at) or record["started_at"]
+    if args.budget_seconds:
+        record["budget_seconds"] = args.budget_seconds
+    for raw in args.shed or []:
+        row = _parse_shed_arg(raw)
+        if row:
+            record["shed"].append(row)
+    seen = set()
+    deduped = []
+    for row in record["shed"]:
+        if row["what"].lower() in seen:
+            continue
+        seen.add(row["what"].lower())
+        deduped.append(row)
+    record["shed"] = sorted(deduped, key=lambda r: (r["at_seconds"], r["what"]))
+    return record
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="Merge specialist finding fragments into the final audit report.")
@@ -139,6 +229,17 @@ def main():
     ap.add_argument("--degraded", action="store_true",
                     help="single-skill degraded mode: no specialist fragments resolved")
     ap.add_argument("--marketplace-version", default="1.0.0")
+    ap.add_argument("--started-at",
+                    help="audit start as ISO 8601 UTC or epoch seconds; overrides the "
+                         "budget.json sidecar. Omit it and the sidecar next to the "
+                         "snapshot (or the snapshot's own audited_at) supplies the clock.")
+    ap.add_argument("--budget-seconds", type=int, default=0,
+                    help="whole-audit wall-clock budget (default %d)" % BUDGET_DEFAULT_SECONDS)
+    ap.add_argument("--budget-file",
+                    help="path to the budget sidecar; defaults to budget.json beside --snapshot")
+    ap.add_argument("--shed", action="append", default=[],
+                    help="work dropped to stay in budget, as 'what@seconds:reason'; "
+                         "repeatable. Merged with whatever the sidecar already recorded.")
     args = ap.parse_args()
 
     refs_dir = os.path.normpath(
@@ -428,6 +529,7 @@ def main():
     }
     snapshot_present = bool(args.snapshot and os.path.exists(args.snapshot))
     pages_selected = 0
+    snapshot_started = None
     if snapshot_present:
         snap = load_json(args.snapshot)
         coverage["pages_discovered"] = snap["discovery"]["candidates_count"]
@@ -440,6 +542,25 @@ def main():
         coverage["browser_available"] = browser_ok
         if not browser_ok:
             coverage["capabilities_unavailable"].append("browser")
+        # collection_started_at is when fetching began; audited_at is when it
+        # ended. Anchoring on audited_at reports ~0s for any scripted run.
+        snapshot_started = _parse_started_at(
+            snap.get("collection_started_at") or snap.get("audited_at"))
+
+    # Runtime is a reported property of the audit, not a claim in the README.
+    # The schema has carried coverage.time_seconds since v1.0 and nothing wrote
+    # it, so a run that overran said nothing about overrunning. It does now.
+    budget = _budget_record(args)
+    started_at = budget["started_at"] or snapshot_started
+    coverage["budget_seconds"] = budget["budget_seconds"]
+    coverage["shed"] = budget["shed"]
+    if started_at is None:
+        coverage["time_seconds"] = None
+        coverage["budget_exceeded"] = False
+    else:
+        coverage["time_seconds"] = max(0, int(
+            datetime.datetime.now(datetime.timezone.utc).timestamp() - started_at))
+        coverage["budget_exceeded"] = coverage["time_seconds"] > budget["budget_seconds"]
     limitations = (["Single-skill degraded mode: no specialist fragments were available;"
                     " specialists_resolved = 0 and the judgment checks are not_evaluated."]
                    if args.degraded else [])
@@ -452,10 +573,27 @@ def main():
                            "runnable checks are not_evaluated and there is nothing to find.")
     limitations.append("The opportunities[] proactive set maps to the remediation playbook "
                        "(references/remediation_playbook.json).")
+    if coverage["time_seconds"] is None:
+        limitations.append("Runtime was not measured for this run (no audit start timestamp "
+                           "was available); coverage.time_seconds is null rather than guessed.")
+    elif coverage["budget_exceeded"]:
+        limitations.append(
+            "This audit took %ds against a %ds budget. The report is complete but the run "
+            "overran; treat the runtime as measured, not as the marketplace's target."
+            % (coverage["time_seconds"], coverage["budget_seconds"]))
+    for row in coverage["shed"]:
+        limitations.append("Shed at %ds to stay inside the %ds budget: %s%s"
+                           % (row["at_seconds"], coverage["budget_seconds"], row["what"],
+                              (" (%s)" % row["reason"]) if row.get("reason") else ""))
     report = {
         "site": args.site,
         "audited_at": now,
-        "audit_status": ("partial" if no_capture else "complete"),
+        # Shedding IS a deadline hit, and the schema already defines partial that
+        # way. Before this, a run could drop every off-site probe and still call
+        # itself complete, which is the one thing this marketplace promises not
+        # to do. Overrunning does not make the report partial - nothing was
+        # dropped - it makes it late, which limitations[] records.
+        "audit_status": ("partial" if (no_capture or coverage["shed"]) else "complete"),
         "report_schema_version": "1.0",
         "marketplace_version": args.marketplace_version,
         "coverage": coverage,
@@ -502,6 +640,15 @@ def main():
              _n(coverage.get("pages_discovered")), _n(coverage.get("checks_passed_count")),
              summary["critical"], summary["high"], summary["medium"], summary["low"],
              len(opportunities)))
+    # The runtime line the emit step reads out loud, so step 7 never reopens
+    # report.json to find out how long its own audit took.
+    print("build_report: RUNTIME %s/%ds%s | shed: %s"
+          % ("%ds" % coverage["time_seconds"] if coverage["time_seconds"] is not None
+             else "not measured",
+             coverage["budget_seconds"],
+             " OVER BUDGET" if coverage["budget_exceeded"] else "",
+             ", ".join("%s@%ds" % (r["what"], r["at_seconds"]) for r in coverage["shed"])
+             or "nothing"))
 
 
 FORBIDDEN_PATTERNS = [
@@ -552,7 +699,19 @@ def _report_markdown(report):
             cov.get("pages_selected", 0), cov.get("pages_discovered", 0),
             report.get("summary", {}).get("total_findings", 0)),
         "",
+        "_Runtime %s against a %ds budget%s._" % (
+            ("%ds" % cov["time_seconds"]) if cov.get("time_seconds") is not None
+            else "not measured",
+            cov.get("budget_seconds", 0),
+            " — **over budget**" if cov.get("budget_exceeded") else ""),
+        "",
     ]
+    if cov.get("shed"):
+        lines.append("**Shed to stay inside the budget:** " + "; ".join(
+            "%s at %ds%s" % (r["what"], r["at_seconds"],
+                             (" — %s" % r["reason"]) if r.get("reason") else "")
+            for r in cov["shed"]))
+        lines.append("")
     summary = report.get("summary", {})
     lines.append("**Severity:** %d critical · %d high · %d medium · %d low" % (
         summary.get("critical", 0), summary.get("high", 0),

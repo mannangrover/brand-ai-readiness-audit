@@ -68,7 +68,42 @@
           "type": "integer"
         },
         "time_seconds": {
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "measured wall-clock seconds from audit start (snapshot collection) to report build; null only when the audit start could not be determined"
+        },
+        "budget_seconds": {
+          "type": "integer",
+          "description": "the whole-audit wall-clock budget this run was held to"
+        },
+        "budget_exceeded": {
+          "type": "boolean",
+          "description": "true when time_seconds exceeded budget_seconds; a report that overran says so rather than hiding it"
+        },
+        "shed": {
+          "type": "array",
+          "description": "work dropped to stay inside the budget, with the clock reading that triggered each drop - empty means nothing was shed, absent means shedding was not tracked",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "what",
+              "at_seconds"
+            ],
+            "properties": {
+              "what": {
+                "type": "string"
+              },
+              "at_seconds": {
+                "type": "integer"
+              },
+              "reason": {
+                "type": "string"
+              }
+            }
+          }
         },
         "capabilities_unavailable": {
           "type": "array",

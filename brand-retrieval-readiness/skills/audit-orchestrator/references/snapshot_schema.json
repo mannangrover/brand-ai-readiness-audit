@@ -24,7 +24,13 @@
     },
     "audited_at": {
       "type": "string",
-      "format": "date-time"
+      "format": "date-time",
+      "description": "when collection FINISHED - stamped after the last fetch"
+    },
+    "collection_started_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "when collection BEGAN - the audit's budget clock starts here, not at audited_at"
     },
     "site_type": {
       "type": "array",

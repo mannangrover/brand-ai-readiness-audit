@@ -57,7 +57,11 @@ from there with explicit paths.
   every OFF check becomes `not_evaluated` ("deadline shed") and the remaining judgments finish
   in one pass each. **That printed number is the gate, read once, and it does not get
   re-evaluated later** — if it said 178 s, off-site probes run even when more time has passed
-  by the time you reach them. One clock, read once, no re-estimating.
+  by the time you reach them. One clock, read once, no re-estimating. That clock is pinned in
+  `audit/budget.json` by `run_phase1`, the shed gates append what they dropped to it, and
+  `build_report` publishes it as `coverage.time_seconds`, `coverage.shed[]` and
+  `coverage.budget_exceeded`. You never carry a timestamp by hand — and you never state a
+  runtime the scripts did not measure.
 - **Round trips:** a shell call costs more than the command inside it. Chain any commands
   that are sequential with no decision between them into one call — snapshot + phase 1, and
   the final fragment write + cleanup + report build. Never chain across a decision you have
@@ -176,7 +180,11 @@ from there with explicit paths.
    re-validate here. Run:
    `python3 <orchestrator>/scripts/build_report.py --site <host> --out ./audit/report.json --snapshot ./audit/snapshot.json --fragment ./audit/findings/<each>.json` (repeat `--fragment` once per fragment file; shell globs are not expanded).
    It assigns finding IDs, dedups root causes, backfills `not_evaluated`, lints forbidden
-   claims, validates the report schema, and prints the human summary.
+   claims, validates the report schema, publishes the measured runtime, and prints the human
+   summary. It finds `audit/budget.json` beside the snapshot on its own — pass no clock flags.
+   The one exception: if you shed work the gates did not record (a judgment you cut short
+   yourself), add it with `--shed "<what>@<seconds>:<reason>"`, repeatable. Shedding anything
+   makes the report `partial` — that is the honest status, not a failure.
    **Chain the last specialist's `write_fragment.py`, any scratch cleanup, and this
    `build_report.py` into one shell call.** They are sequential with no decision between
    them, so three round trips buy nothing.
@@ -187,7 +195,9 @@ from there with explicit paths.
    alongside the machine-readable `./audit/report.json`. **Do not rewrite either one, and do
    not re-read `report.json` to restate it.** From the summary the build printed, say in chat
    in at most ten lines: the headline problem, the top two or three fixes in order,
-   `audit_status` and coverage, and the honest limits. Then point at `./audit/report.md` for
+   `audit_status`, coverage, the `RUNTIME` line the build printed (measured seconds against
+   the budget, and what was shed), and the honest limits. Read that runtime off stdout —
+   never estimate how long your own audit took. Then point at `./audit/report.md` for
    the rest. Never paste report JSON in chat. "Not evaluated" is never a defect and is never
    silently dropped; it is in the document. After a valid report: stop. No further
    verification passes.
